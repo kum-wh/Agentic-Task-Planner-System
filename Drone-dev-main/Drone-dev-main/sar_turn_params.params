@@ -1,0 +1,58 @@
+# Onboard parameters - SAR search turn behavior (bank and yaw together through corners)
+#
+# Stack: PX4
+# Vehicle: Multirotor (x500)
+#
+# Load in QGC: Vehicle Setup -> Parameters -> Tools -> Load from file...
+#
+# NOTE (08 Sep 2026): MIS_YAWMODE does not exist in PX4 v1.16 -- the parameter was
+# renamed to MPC_YAW_MODE, so the old line below was silently doing nothing.
+# Verified against build/px4_sitl_default/parameters.json on this box.
+#   1	1	MIS_YAWMODE	1	6      <- removed, not a v1.16 parameter
+#
+# NOTE (11 Sep 2026): corners are now flown banked, not from a standstill.
+#   MPC_YAW_MODE     4 -> 3   "along trajectory": the heading follows the path, so the
+#                             vehicle yaws WHILE it banks. 4 ("yaw first") braked to a stop
+#                             at every corner to finish yawing -- ~8 s a corner, measured.
+#                             The ZR30 gimbal, not the airframe heading, aims the camera.
+#   MPC_ACC_HOR      2 -> 2.6 ~15 deg of bank in a corner (9.81 * tan 15deg).
+#
+# NOTE (18 Sep 2026): MPC_ACC_HOR 2.6 -> 4.5.
+#   2.6 was chosen for ~15 deg of bank, but it is also the acceleration PX4 uses to brake
+#   for and recover from every waypoint, and it feeds the per-waypoint speed cap
+#   sqrt(MPC_ACC_HOR * param2 * tan(bend/2)). Measured on toa-payoh drone-3 (16 Sep, SITL,
+#   28 m layer, 12.2 m/s planned): the survey averaged 8.13 m/s and spent 40 % of its time
+#   below 6 m/s -- 12 m/s down each lane, braking to ~3.5 m/s at every turn, 13 slow-downs
+#   in a 300 s window, pitch swinging -23.7/+12.1 deg. Altitude held to 0.25 m throughout,
+#   so this was never instability: the aircraft was being TOLD to stop and restart.
+#   4.5 m/s^2 is ~24.6 deg of bank, just inside the MPC_TILTMAX_AIR 25 ceiling, and it
+#   raises what the 11.65 m automatic turn radius allows from 5.5 to 7.3 m/s. Paired with
+#   ARC_STEP_DEG 45 -> 90 in geometry.py, which stops the arc drawing writing a small
+#   param2. Holding the old 15 deg bank needs about 2.2.
+#
+# NOTE (22 Sep 2026): MPC_ACC_HOR 4.5 -> 3.5. 4.5 saturated the tilt ceiling.
+#   Flown 18 Sep at 4.5 (toa-payoh drone-3, same plan): the survey was 11.3 % faster
+#   (459.7 -> 407.5 s) and time below 4 m/s fell 71 %, but peak bank per turn came out at
+#   24.54 deg median and 24.79 deg max against MPC_TILTMAX_AIR 25 -- 0.21 deg of headroom,
+#   on essentially every turn. The giveaway was that it did NOT overshoot its commanded
+#   bank the way 2.6 does (15.68 median against a 14.83 target): the tilt limit was
+#   clamping it. Where a turn needed more than 25 deg the controller could not deliver it
+#   and ran wide, and survey cross-track mean went 0.22 -> 0.74 m.
+#   3.5 m/s^2 is ~19.6 deg, leaving 5.4 deg of margin, and still allows 6.4 m/s round the
+#   11.65 m automatic radius against 5.5 at 2.6.
+#   NAV_ACC_RAD      2 -> 5   how far out a corner may start; PX4 allows
+#                             sqrt(accel * radius * tan(angle/2)) through it -- 3.6 m/s
+#                             round a 90 deg lane corner. Corners beside an excluded notch
+#                             carry their own 2 m radius in the .plan (param2).
+#   MPC_YAWRAUTO_MAX 45 -> 90 deg/s, so the heading keeps up with the bank: a 90 deg
+#                             corner at 2 m needs 66 deg/s, above PX4's 45 default.
+#
+# MAV ID  COMPONENT ID  PARAM NAME       VALUE   TYPE(6=int32, 9=float)
+1	1	MPC_YAW_MODE	3	6
+1	1	NAV_ACC_RAD	5.0	9
+1	1	MPC_ACC_HOR	3.5	9
+1	1	MPC_YAWRAUTO_MAX	90.0	9
+1	1	MPC_TILTMAX_AIR	25.0	9
+# Ceiling only -- the actual cruise speed arrives as a DO_CHANGE_SPEED mission item
+# derived from the camera model. PX4's 12.0 default would clamp it above ~28 m AGL.
+1	1	MPC_XY_VEL_MAX	20.0	9

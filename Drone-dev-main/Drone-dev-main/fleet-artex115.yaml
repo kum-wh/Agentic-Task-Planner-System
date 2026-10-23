@@ -1,0 +1,10 @@
+# Bench: jetson-1 -> ELRS relay -> ARTEX115 (sysid 115). No params, no set: nothing is
+# written to the aircraft's parameters. Relay must be running on jetson-1 (tools/elrs_link.py).
+plans_dir: missions/toapayoh/mission_drones
+
+drones:
+  - slot: 1
+    sysid: 115
+    host: jetson-1
+    remote_dir: ~/FlightPlanner
+    link: "udpout://127.0.0.1:14540"

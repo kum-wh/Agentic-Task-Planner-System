@@ -1,0 +1,7 @@
+{
+  "number_of_drones": 3,
+  "camera_fov_degrees": 58.1,
+  "scan_altitude_m": 30.0,
+  "scan_overlap_percent": 25.0,
+  "scan_type": "lawnmower"
+}

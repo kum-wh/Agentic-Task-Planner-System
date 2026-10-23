@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "multi-agent-flight-planner"
+version = "0.1.0"
+description = "KML to multi-drone QGroundControl plan generator"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "PyYAML>=6"]
+
+[project.scripts]
+flight-planner = "flight_planner.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+# The workstation sources the ROS 2 Humble overlay, which puts launch_testing's pytest
+# plugins on the path (entry points "launch_testing" and "launch_ros"). They import
+# `lark` and register launch-only hooks, neither of which this venv has, so autoloading
+# them crashes pytest before collection. They are irrelevant to these tests, and
+# blocking a plugin name that is not installed is a no-op elsewhere.
+addopts = "-p no:launch_testing -p no:launch_ros"

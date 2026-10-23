@@ -1,0 +1,22 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+config.json
+*.plan
+*_drones/
+
+# --- demo repo (23 Sep 2026) ---
+# Generated mission output: plans, tracks, screenshots. Regenerate with
+#   flight-planner <ops KML> --output missions/<site>/mission.plan
+missions/
+# Operational site definitions (KML sectors) are kept out of the repo.
+ops/
+# Recorded SITL flight traces from the 18 Sep speed-tuning sorties.
+base_speed.json
+tuned_speed.json
+# Tooling caches
+.pytest_cache/
+
+# the abort flag tools/takeover.py writes -- never a repo artefact
+ABORT

@@ -1,0 +1,31 @@
+# The real two-Jetson fleet, 28 Sep 2026.
+#
+# Reached over the unmanaged ETH switch. Nothing serves DHCP there, so every address is
+# static on 192.168.144.0/24: workstation .50 (switch port 5), jetson-1 .101, jetson-2 .102.
+# Measured over this wire on the office LAN 28 Sep: 0.51 ms RTT, 0% loss across 20 pings,
+# against 19 ms and 50% loss on wifi. Use tools/switch_link.sh to bring a board up.
+#
+# `link` points at the workstation's SITL GCS ports here, so the whole C2 path -- ssh,
+# arm64 agent, barrier, token, failsafe -- runs against simulated vehicles. For a live
+# flight the link becomes the Jetson's own ELRS relay, udpout://127.0.0.1:14540, with
+# tools/elrs_link.py in front of the backpack. Nothing else in this file changes.
+
+params: sar_turn_params.params
+plans_dir: missions/toapayoh/mission_drones
+
+drones:
+  - slot: 1
+    sysid: 1
+    host: jetson-1
+    remote_dir: ~/FlightPlanner
+    link: "udpout://192.168.144.50:18570"
+    set:
+      RTL_RETURN_ALT: 35
+
+  - slot: 2
+    sysid: 2
+    host: jetson-2
+    remote_dir: ~/FlightPlanner
+    link: "udpout://192.168.144.50:18571"
+    set:
+      RTL_RETURN_ALT: 45

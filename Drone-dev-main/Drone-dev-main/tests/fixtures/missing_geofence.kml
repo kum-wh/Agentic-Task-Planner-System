@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document>
+	<Placemark>
+		<name>GCSlocation</name>
+		<Point>
+			<coordinates>10.0000,50.0000,10</coordinates>
+		</Point>
+	</Placemark>
+	<Placemark>
+		<name>OpsArea</name>
+		<Polygon>
+			<outerBoundaryIs>
+				<LinearRing>
+					<coordinates>
+						9.998,49.998,0
+						10.002,49.998,0
+						10.002,50.002,0
+						9.998,50.002,0
+						9.998,49.998,0
+					</coordinates>
+				</LinearRing>
+			</outerBoundaryIs>
+		</Polygon>
+	</Placemark>
+</Document>
+</kml>

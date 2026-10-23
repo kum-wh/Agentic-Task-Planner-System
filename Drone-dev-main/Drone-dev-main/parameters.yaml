@@ -1,0 +1,885 @@
+# =============================================================================
+# SAR mission parameter reference
+# =============================================================================
+# Every knob in the planning -> flight chain, what it changes, and where it lives.
+#
+# Read the `status` field on each block:
+#   active      - read by the code today; changing it changes behaviour
+#   derived     - computed, never set by hand; listed so you can see what moves
+#   constant    - hardcoded in source; here for visibility, edit the source to change
+#   GAP         - SHOULD be set but currently is not. These are bugs, not settings.
+#
+# The governing rule of this project: ALTITUDE IS THE ONLY IMAGING KNOB. Anything
+# under `derived:` is a function of it. If you find yourself typing a spacing or a
+# speed by hand, something has gone wrong.
+#
+# Verified against: PX4 v1.16.0 (6ea3539157, 2025-08-05), Gazebo Sim 8.11,
+# QGC 4.4.3, on 2026-09-09.
+# =============================================================================
+
+meta:
+  applies_to: FlightPlanner (KML -> multi-drone QGC .plan) + PX4 SITL
+  vehicle: x500 multirotor (sim) / SAR multirotor (real)
+  camera: SIYI ZR30, 3-axis gimbal, nadir
+
+
+# -----------------------------------------------------------------------------
+# 1. CAMERA SENSOR  --  src/flight_planner/camera.py :: Camera
+# -----------------------------------------------------------------------------
+# Physical properties of the imager. Change these only if the camera or its video
+# mode changes. Everything in `derived:` is computed from these plus altitude.
+camera:
+  status: active
+  source: src/flight_planner/camera.py
+
+  hfov_deg:
+    value: 58.1
+    units: degrees
+    effect: >
+      Horizontal field of view. Sets the cross-track ground swath
+      W = 2*h*tan(HFOV/2), which in turn sets lane spacing and GSD. This is THE
+      dominant optical parameter - widen it and every lane gets further apart.
+    note: ZR30 at 1x zoom. Overriding via mission.camera_fov_degrees rescales VFOV
+          by the image aspect ratio (see camera_with_hfov).
+
+  vfov_deg:
+    value: 35.0
+    units: degrees
+    effect: >
+      Vertical field of view. Sets the along-track footprint L = 2*h*tan(VFOV/2),
+      which only feeds the forward-overlap speed cap. In practice this cap is ~16x
+      looser than the motion-blur cap, so VFOV almost never affects the output.
+    note: Spec-sheet value. The 16:9 aspect ratio implies 34.7 deg; we keep the
+          measured 35.0 because that pair was flight-validated.
+
+  img_w:
+    value: 1280
+    units: pixels
+    effect: >
+      Image width. Divides the swath to give GSD (GSD = W / img_w). Halving it
+      doubles GSD, which doubles the blur-safe speed but halves pixels-on-target.
+
+  img_h:
+    value: 720
+    units: pixels
+    effect: Image height. Used only to rescale VFOV when HFOV is overridden.
+
+  fps:
+    value: 30
+    units: frames/second
+    effect: Frame rate. Feeds the forward-overlap speed cap only (L*(1-fwd)*fps).
+
+
+# -----------------------------------------------------------------------------
+# 2. IMAGING MODEL  --  src/flight_planner/camera.py :: compute()
+# -----------------------------------------------------------------------------
+# The survey-quality choices. These are the arguments to compute() that are NOT
+# currently exposed through config.json - to change them you edit the call site.
+imaging:
+  status: active
+  source: "src/flight_planner/camera.py :: compute()"
+
+  side_overlap:
+    value: 0.25
+    units: fraction (0-1)
+    effect: >
+      Cross-track overlap between adjacent lanes. Lane spacing = W*(1-side_overlap),
+      so raising it packs lanes closer: more passes, longer flight, better redundancy
+      against a target being missed at a swath edge. THE coverage-vs-time knob.
+    exposed_as: mission.scan_overlap_percent
+
+  fwd_overlap:
+    value: 0.25
+    units: fraction (0-1)
+    effect: >
+      Along-track overlap between consecutive frames. Feeds the forward-overlap
+      speed cap only. Rarely binding at 30 fps.
+    exposed_as: mission.scan_overlap_percent (same value used for both)
+
+  exposure_s:
+    value: 0.001
+    units: seconds
+    effect: >
+      Shutter time. Sets the motion-blur speed cap directly (v = GSD/exposure), and
+      that cap is almost always the binding one - so THIS is what really limits
+      cruise speed. A dusk mission at 1/250 s cuts the safe speed by 4x.
+    note: NOT exposed in config.json. A dawn/dusk SAR launch needs this changed and
+          currently cannot without editing source. Worth exposing.
+
+  target_size_m:
+    value: 0.5
+    units: metres
+    effect: >
+      Smallest dimension of the search target (0.5 m ~ a person). Only reports
+      pixels-on-target; does not alter the flight plan. Use it as a sanity check -
+      below roughly 10-20 px a person stops being reliably identifiable.
+
+  speed_derate:
+    value: 0.5
+    units: fraction
+    effect: >
+      Safety margin applied to the binding speed cap. Cruise = min(caps)*derate.
+      At 0.5 we fly at half the blur limit. Raise toward 1.0 to cover more ground
+      per battery at the cost of blur margin in gusts.
+
+
+# -----------------------------------------------------------------------------
+# 3. MISSION CONFIG  --  config.json (loaded into PlannerConfig)
+# -----------------------------------------------------------------------------
+# The only file an operator normally edits.
+mission:
+  status: active
+  source: "config.example.json -> src/flight_planner/models.py :: PlannerConfig"
+
+  scan_altitude_m:
+    value: 30.0
+    units: metres AGL
+    effect: >
+      THE ONE KNOB. Scales swath, GSD, lane spacing and cruise speed linearly.
+      30 m -> 33.3 m swath, 2.60 cm/px, 25.0 m lanes, 13.0 m/s. Doubling altitude
+      doubles all four and halves pixels-on-target.
+    validation: must be > 0
+    cli_override: --alt
+
+  camera_fov_degrees:
+    value: 58.1
+    units: degrees
+    effect: Overrides camera.hfov_deg for this mission (e.g. a zoom step).
+            VFOV is re-derived from the aspect ratio unless the value matches
+            the ZR30's own 58.1.
+    validation: 1 <= value < 180
+
+  scan_overlap_percent:
+    value: 25.0
+    units: percent
+    effect: Feeds BOTH side_overlap and fwd_overlap. Drives lane spacing.
+    validation: 0 <= value < 100
+
+  number_of_drones:
+    value: 3
+    units: count
+    effect: >
+      How many sub-areas the OpsArea is partitioned into - one flyable .plan each.
+      Purely a planning-time split; see the swarm caveats at the bottom of this file.
+    validation: must be >= 1
+
+  scan_type:
+    value: lawnmower
+    options: [lawnmower, voronoi]
+    effect: >
+      Partition strategy.
+      lawnmower - equal-WIDTH contiguous strips cut along the OpsArea's longer axis.
+      voronoi   - one Voronoi cell per drone, grown by half-plane clipping around
+                  spread-out seeds. Better for irregular areas; strips are more
+                  predictable to brief.
+    cli_override: --scan-type
+
+  layer_spacing_m:
+    value: 2.0
+    units: m
+    effect: >
+      Vertical stagger between drones. Drone 1 flies scan_altitude_m, drone 2 one layer
+      up, drone 3 one down, then two up, two down... At the defaults: 30 / 32 / 28 m ->
+      2.60 / 2.78 / 2.43 cm/px, 25.0 / 26.7 / 23.3 m lanes, 13.0 / 13.9 / 12.2 m/s - each
+      drone's imaging re-derives from its own layer. Layers at least
+      min_vertical_separation_m apart are what let the guardrail pass drones whose paths
+      touch; set it below that and those plans are refused. Chosen 11 Sep 2026.
+    validation: ">= 0, and the lowest layer must stay above the ground"
+
+  turn_radius_m:
+    value: 0.0
+    units: m
+    effect: >
+      Radius every turn is flown at, in one steady bank, like an aircraft. 0 = automatic:
+      half the drone's own lane spacing (11.7 / 12.5 / 13.3 m at 28 / 30 / 32 m), the widest
+      turn that fits between neighbouring lanes. Bigger = gentler and faster (at 15 deg of
+      bank the speed round the turn is sqrt(2.6 * radius): 5.5 m/s at 11.7 m), smaller =
+      tighter and slower. Capped automatically: a lane-end U-turn cannot exceed half the
+      lane spacing (skipping lanes would be needed for more), and no turn may cut deeper
+      inside its corner than turn_cut_footprint_fraction of the camera footprint allows.
+    validation: ">= 0"
+
+  turn_style:
+    value: circle
+    options: [circle, pre_yaw]
+    effect: >
+      How corners are flown. circle - each corner drawn as a circle for PX4 to round
+      (turn_radius_m). pre_yaw - the "anti-centripetal" tactic (14 Sep 2026): corners stay
+      sharp, and every waypoint carries the heading of the leg leaving it, so the nose turns
+      to the next leg on the approach and the heading change is done before the corner. A
+      pass-through waypoint pre_yaw_lead_s before each corner keeps the nose on the lane
+      until then. Changing direction still needs the tilt it always did; what pre_yaw removes
+      is the yaw at the corner. Flown 14 Sep late (Toa Payoh drone-3): the nose was round
+      before every corner and none hovered, survey 477 s, tracking as sharp corners - but
+      total tilt unchanged (p95 19.5 deg), the braking moved into roll (max 22.2 deg, the most
+      of any version) and each pre-rotation snapped at ~150 deg/s with ~20 deg overshoot.
+      Not a way to soften the bank; circle stays the default.
+
+  pre_yaw_lead_s:
+    value: 3.0
+    units: s
+    effect: >
+      pre_yaw only: how long before each corner (at cruise speed) the nose starts turning.
+      3 s = 37 m at 12.2 m/s. It must cover the rotation - 1 s for 90 deg at MPC_YAWRAUTO_MAX
+      90 deg/s, plus settling - because PX4 will not count a waypoint carrying a heading as
+      reached until the nose is within MIS_YAW_ERR (12 deg), and hovers until it is.
+    validation: "> 0"
+
+  ingress_style:
+    value: direct
+    options: [direct, gate]
+    effect: >
+      How the swarm leaves home. direct - every drone flies straight to its own first
+      waypoint, which is what it has always done, and the swarm never flies as a formation:
+      measured at Toa Payoh 16 Sep 2026, the drones start searching 35-39 s apart. gate -
+      they fly out together to one shared dispersal point, each on its own transit layer,
+      and split there. A gate ALWAYS costs distance: home -> gate -> start is never shorter
+      than home -> start, so it buys formation flying and a simultaneous start, never
+      endurance. The bill is small because ingress is only 4-14 % of a flight.
+    validation: "direct or gate"
+
+  ingress_objective:
+    value: arrival
+    options: [arrival, distance, energy]
+    effect: >
+      What the gate is placed to equalise (ingress_style gate only). arrival - every drone
+      reaches its cell at the same moment; this is NOT the same as equal distance, because
+      the layers cruise at 12.2 / 13.0 / 13.9 m/s, and an equal-distance gate still lands
+      them 7-8 s apart. distance - equal metres for every drone. energy - lowest worst-case
+      battery load, which correctly places the gate AT HOME (any gate costs energy) and so
+      effectively turns grouping off; the planner warns when that happens. Measured at
+      Toa Payoh lawnmower: arrival 0.2 s spread for +632 m of fleet distance, distance 0.0 m
+      spread for +516 m, energy -248 m and no formation.
+    validation: "arrival, distance or energy"
+
+  transit_layer_spacing_m:
+    value: 5.0
+    units: m
+    effect: >
+      Vertical spacing between drones while they transit to the gate as a group, before
+      they split to their cells. Wider than layer_spacing_m because formation flight wants
+      more room than a survey stack, and it is free: nothing is imaged in transit, so image
+      quality is untouched. Applying 5 m to the SURVEY instead would put the top drone at
+      35 m, where GSD is 3.04 cm/px - outside the 3 cm/px standard, whose ceiling is 34.6 m.
+      The drone descends (or climbs) to its survey layer on the leg after the gate, once the
+      swarm has already split.
+    validation: ">= 0, and the lowest transit layer must stay above the ground"
+
+  ingress_min_gate_m:
+    value: 0.0
+    units: m
+    effect: >
+      How far out the dispersal gate must be before it counts as a rendezvous. 0 = no
+      constraint, and then "fairest, then cheapest" puts the gate at home whenever the
+      entry-end choice alone can equalise the ingress - it is free, so the cost tie-break
+      has nothing left to trade. Measured at Bedok (16 Sep 2026): the arrival objective
+      returned a gate 55 m out, fair to 0.2 s, with a four-second formation leg. Setting
+      200 moved it to 561 m (a 46 s formation leg) and kept the 0.2 s spread. If nowhere
+      inside the fence is far enough out, the planner falls back to flying out directly
+      and says so.
+    validation: ">= 0"
+
+  assignment:
+    value: index
+    options: [index, energy]
+    effect: >
+      Which drone flies which cell. index - drone i flies cell i, as before. energy - cells
+      are handed out so the worst-off drone keeps the most battery margin. This is the only
+      lever here that saves anything: it is fleet-distance neutral (a permutation cannot
+      change the sum of the cell costs, only who pays them), and on an illustrative fleet
+      (2.3 / 2.6 / 3.0 kg at 100 / 90 / 75 % charge) it took 16.9 % off the worst drone's
+      draw at Toa Payoh lawnmower for zero extra metres. Needs `drones` to do anything:
+      identical drones have nothing to trade.
+    validation: "index or energy"
+
+  drones:
+    default: "none - every drone treated as the reference airframe at full charge"
+    effect: >
+      Per-drone mass and state of charge, in drone order, as
+      [{mass_kg, battery_fraction, payload_class}, ...]. Give one per drone or none at all.
+      payload_class is carried for provenance and changes nothing: the classes and their
+      masses are the operator's to define (history.md, parked item 4), and inventing them
+      here would bake a guess into every plan.
+
+
+# -----------------------------------------------------------------------------
+# 4. DERIVED  --  never set these by hand
+# -----------------------------------------------------------------------------
+derived:
+  status: derived
+  source: "src/flight_planner/camera.py :: MissionProfile"
+  at_30m_defaults:   # what the values above produce today
+
+    swath_w_m:        {value: 33.3, formula: "2*h*tan(HFOV/2)", effect: Ground width one pass sees.}
+    along_track_m:    {value: 18.9, formula: "2*h*tan(VFOV/2)", effect: Along-track footprint; feeds fps cap.}
+    gsd_cm_px:        {value: 2.60, formula: "W/img_w", effect: Ground sample distance - the resolution number.}
+    line_spacing_m:   {value: 25.0, formula: "W*(1-side_overlap)", effect: Lane pitch handed to the scanner.}
+    v_fwd_overlap_ms: {value: 425.7, formula: "L*(1-fwd)*fps", effect: fps speed cap - essentially never binds.}
+    v_motion_blur_ms: {value: 26.0, formula: "GSD/exposure", effect: Blur speed cap - THE binding one.}
+    v_recommended_ms: {value: 13.0, formula: "min(caps)*derate", effect: Cruise speed written into the .plan.}
+    target_px:        {value: 19, formula: "target_size/GSD", effect: Pixels across a person. Sanity check.}
+
+  ceiling_query:
+    effect: >
+      Inverse lookup - highest altitude still meeting a required GSD.
+      `flight-planner --ceiling 3.0` -> 34.6 m. Stops an operator planning a scan
+      flown too high to resolve a person.
+
+
+# -----------------------------------------------------------------------------
+# 5. PX4 VEHICLE PARAMETERS  --  sar_turn_params.params
+# -----------------------------------------------------------------------------
+# Loaded in QGC: Vehicle Setup -> Parameters -> Tools -> Load from file.
+# These live on the AIRCRAFT, not in the .plan.
+px4_parameters:
+  status: active
+  source: sar_turn_params.params
+
+  MPC_YAW_MODE:
+    value: 3
+    px4_default: 0
+    type: int32
+    effect: >
+      Heading behaviour in autonomous modes. 3 = "along trajectory": the heading follows
+      the path, so the vehicle yaws WHILE it banks through a corner. Until 11 Sep 2026
+      this was 4, "towards waypoint (yaw first)", which made FlightTaskAuto brake to a
+      standstill at every corner to finish yawing (`should_wait_for_yaw_align`) - about
+      8 s a corner, measured on three sorties. The ZR30 gimbal, not the airframe heading,
+      keeps the camera on target, so the stop bought nothing.
+    enum:
+      0: towards waypoint          # points at the waypoint but does NOT wait
+      1: towards home              # nose pinned at launch point - wrong for a survey
+      2: away from home
+      3: along trajectory          # <-- ours since 11 Sep 2026
+      4: towards waypoint (yaw first)   # until 11 Sep 2026 - stops at every corner
+      5: yaw fixed
+    note: >
+      REPLACES the old MIS_YAWMODE, which does not exist anywhere in PX4 v1.16.
+      The numeral does not carry over: old MIS_YAWMODE=1 ("towards next waypoint")
+      maps to MPC_YAW_MODE=0, NOT 1. Writing 1 here would give "towards home".
+      Source: src/modules/mc_pos_control/multicopter_autonomous_params.c and
+      FlightTaskAuto.cpp (`should_wait_for_yaw_align`).
+
+  NAV_ACC_RAD:
+    value: 5.0
+    px4_default: 10.0
+    units: m
+    effect: >
+      Waypoint acceptance radius - and, for a multicopter, how far out a corner may start
+      to be rounded. PX4 passes a corner at sqrt(accel * radius * tan(angle/2))
+      (TrajMath::computeMaxSpeedInWaypoint): 3.6 m/s round a 90 deg lane corner at 5 m
+      and 15 deg of bank, cutting 2.1 m inside it - well within the camera's 9.5 m
+      half-footprint, so lane ends stay covered. At the 10 m default the cut (4.1 m) and
+      the unsearched wedges grow. Corners that must stay tight (beside an excluded notch,
+      or where a 5 m rounding would leave the OpsArea) carry their own 2 m radius as
+      param2, which PX4 honours per waypoint for multicopters (mission_block.cpp).
+      2.0 until 11 Sep 2026, when every corner was a full stop anyway.
+    note: Mirrored in code as models.CORNER_ACCEPTANCE_RADIUS_M - the two must agree.
+
+  MPC_ACC_HOR:
+    value: 3.5
+    px4_default: 3.0
+    units: m/s^2
+    effect: >
+      Horizontal acceleration, and so the bank in a corner: 3.5 m/s^2 is ~19.6 deg
+      (9.81 * tan 19.6deg), leaving 5.4 deg of margin under the MPC_TILTMAX_AIR 25 ceiling. Also sets how hard
+      the vehicle brakes and accelerates, and it feeds PX4's per-waypoint speed cap
+      sqrt(MPC_ACC_HOR * param2 * tan(bend/2)) - which is why it governs survey speed and
+      not just corner bank. 2.6 (~15 deg) from 11 Sep until 18 Sep 2026; at 2.6 the
+      toa-payoh drone-3 survey (16 Sep, SITL, 28 m layer, 12.2 m/s planned) averaged
+      8.13 m/s and spent 40 % of its time below 6 m/s, braking to ~3.5 m/s at every turn
+      with pitch swinging -23.7/+12.1 deg while altitude held to 0.25 m - commanded
+      stop-start, not instability. 4.5 from 18-22 Sep 2026 raised what the 11.65 m automatic turn
+      radius allows from 5.5 to 7.3 m/s but saturated the tilt ceiling - peak bank came out
+      24.54 deg median, 24.79 max against MPC_TILTMAX_AIR 25, and cross-track mean went
+      0.22 -> 0.74 m because turns needing more than 25 deg ran wide. 3.5 allows 6.4 m/s
+      with 5.4 deg of margin. Flown 11 Sep at 2.6: lane corners banked 17.3 deg median,
+      19.9 max - above the 15 aimed for. Holding 15 deg needs about 2.2.
+
+  MPC_YAWRAUTO_MAX:
+    value: 90.0
+    px4_default: 45.0
+    units: deg/s
+    effect: >
+      Yaw-rate ceiling in autonomous modes. With MPC_YAW_MODE 3 the heading has to turn
+      as fast as the path does, sqrt(accel / turn radius): 41 deg/s through a 90 deg
+      corner at 5 m, 66 deg/s at a tight 2 m corner - above PX4's 45 default, where the
+      nose would lag the bank. A ceiling, not a target. Flown 11 Sep 2026: yaw peaked at
+      108 deg/s (median lane corner) and 142 deg/s (notch corners), above this value - so
+      it is not what limits yaw with MPC_YAW_MODE 3. What does is still to be found.
+
+  MPC_TILTMAX_AIR:
+    value: 25.0
+    px4_default: 45.0
+    units: degrees
+    effect: >
+      Maximum tilt in flight. Capping at 25 deg limits how far the airframe leans
+      when accelerating. The ZR30 gimbal holds nadir through roll anyway, so this is
+      belt-and-braces, plus it keeps the props out of frame on a wide FOV.
+
+
+  MPC_XY_VEL_MAX:
+    value: 20.0
+    px4_default: 12.0
+    units: m/s
+    effect: >
+      Hard ceiling on horizontal velocity. A CEILING, not a target - the actual cruise
+      speed arrives per-mission as a DO_CHANGE_SPEED item derived from the camera model.
+      PX4's 12.0 default would clamp our 13.0 m/s cruise at 30 m, and any altitude above
+      ~28 m makes it binding. Raised to 20.0, which covers altitudes up to ~46 m; above
+      that the planner emits a warning that the airframe, not the optics, is the limit.
+    note: Mirrored in code as models.VEHICLE_MAX_SPEED_M_S - the two must agree.
+
+# -----------------------------------------------------------------------------
+# 6. GAPS  --  parameters that SHOULD be set and currently are NOT
+# -----------------------------------------------------------------------------
+# These are open defects, recorded here so they are not lost. See README.
+gaps:
+  status: none currently open
+
+# CLOSED 2026-09-10 -- kept for the record (planned, not yet flown):
+#
+#   opsarea_breach. Survey legs flew straight across notches cut out of the OpsArea:
+#   Toa Payoh 1208 m over 10 legs (lawnmower; drone-3 flew it on 09 Sep), 1211 m
+#   (voronoi), Ubin voronoi 55 m. Lane pieces are now grouped into cells, each flown as
+#   its own lawnmower (scanner_tools.py :: _cells), and every connector is routed inside
+#   the OpsArea round the notch corners (geometry.py :: BoundaryRouter, clearance
+#   route_clearance_m). The guardrail now holds survey waypoints and legs to the OpsArea
+#   as well as the GeoFence; transits are exempt. Planned breach: 0 m on all three sites,
+#   both scan types.
+#
+# CLOSED 2026-09-09 -- kept for the record:
+#
+#   MPC_XY_CRUISE / cruiseSpeed never reaching the vehicle. The .plan now carries a
+#   DO_CHANGE_SPEED (178) item before NAV_TAKEOFF with the camera model's speed in
+#   param2, so MPC_XY_CRUISE is only a fallback if that item is stripped. Verified:
+#   transit speed 5.00 -> 13.00 m/s median, time to search area 155 s -> 79 s.
+#   MPC_XY_VEL_MAX raised from PX4's 12.0 to 20.0 so the derived speed is not clamped.
+#
+#   guardrail_transit_legs. The fence check now walks [home] + survey + [home], so the
+#   takeoff transit and the RTL return are validated. Home is checked once, separately,
+#   so a fence excluding the launch point reports its actual cause instead of 2N leg
+#   failures. Both real sectors still pass with the transits checked.
+#
+#   drone_count_overstates_flyable_plans. x-multiDrone.droneCount now counts the drones
+#   that produced items -- the number of drone-N.plan files that exist -- and
+#   requestedDroneCount preserves the configured figure so the discrepancy stays visible.
+
+
+# -----------------------------------------------------------------------------
+# 7. PLAN FORMAT CONSTANTS  --  src/flight_planner/qgc_plan.py
+# -----------------------------------------------------------------------------
+plan_format:
+  status: constant
+  source: src/flight_planner/qgc_plan.py
+
+  NAV_TAKEOFF:          {value: 22, effect: Climb to altitude at the first waypoint.}
+  NAV_WAYPOINT:         {value: 16, effect: Each lawnmower point.}
+  NAV_RETURN_TO_LAUNCH: {value: 20, effect: Return and land.}
+  DO_CHANGE_SPEED:
+    value: 178
+    effect: >
+      Sets the vehicle's cruise speed, emitted once per drone immediately after takeoff.
+      PX4 reads the speed from param2 and ignores param1's speed type; it also caches and
+      replays this item after a mission resume, so one item governs the whole flight.
+      This is what makes the camera model's blur-safe speed actually reach the aircraft.
+    params: "[1 (ground speed), <cruise m/s>, -1 (throttle unchanged), 0, 0, 0, 0]"
+  FRAME_GLOBAL_RELATIVE_ALT:
+    value: 3
+    effect: Frame for takeoff and waypoints - altitude relative to home.
+  FRAME_MISSION:
+    value: 2
+    effect: >
+      Frame for the RTL item. MUST be 2. On frame 3 PX4 rejects the WHOLE mission
+      with "Command not supported" / "IGN MISSION_ITEM: Invalid item".
+  AltitudeMode:  {value: 1, effect: Relative to home.}
+  hoverSpeed:    {value: 5, units: m/s, effect: QGC planning-UI hover estimate only.}
+  firmwareType:  {value: 12, effect: PX4.}
+  vehicleType:   {value: 2, effect: Multirotor.}
+  param4_yaw:
+    value: null
+    effect: >
+      Yaw left unset on takeoff/waypoint items so MPC_YAW_MODE governs heading - except with
+      turn_style pre_yaw, where every waypoint carries the compass heading of the leg leaving
+      it. A set heading overrides MPC_YAW_MODE (FlightTaskAuto.cpp) and makes PX4 wait at the
+      waypoint until the nose is within MIS_YAW_ERR (12 deg) of it; MIS_YAW_TMT -1 = no timeout.
+
+
+# -----------------------------------------------------------------------------
+# 8. GEOMETRY / ALGORITHM TOLERANCES
+# -----------------------------------------------------------------------------
+geometry:
+  status: constant
+
+  EARTH_RADIUS_M:
+    value: 6378137.0
+    source: geometry.py
+    effect: WGS84 equatorial radius for the local equirectangular projection.
+    note: drone-dev used AEQD (pyproj); equirectangular is marginally less accurate
+          but the difference is negligible at SAR scale.
+
+  lane_spacing_floor_m:
+    value: 0.1
+    source: "models.py :: lane_spacing_m"
+    effect: Stops a pathological overlap (e.g. 99.9%) producing infinite lanes.
+
+  lane_count_tolerance:
+    value: 1.0e-9
+    source: "scanner_tools.py :: _lawnmower_points"
+    effect: >
+      Relative tolerance on ceil(extent/spacing). Rotating a polygon perturbs its
+      extent in the last bits; without this an exact multiple tips over the ceil
+      boundary, adds a spurious lane, collapses the centring offset and puts lanes
+      ON the boundary where they scan nothing.
+
+  seed_dedupe_tolerance_m:
+    value: 1.0e-6
+    source: "scanner_tools.py :: _distinct"
+    effect: >
+      Distance below which two Voronoi seeds count as identical. Identical seeds
+      make the half-plane clip a no-op, handing two drones the same cell.
+
+  seed_grid_refinements:
+    value: 8
+    source: "scanner_tools.py :: _seed_points"
+    effect: Max grid subdivisions while hunting for enough in-polygon seeds.
+
+  guardrail_intersection_eps:
+    value: 1.0e-9
+    source: "geometry.py :: segments_properly_intersect"
+    effect: >
+      Proper-intersection only. A leg that merely touches the fence at a vertex or
+      runs along a boundary edge is not a breach - treating it as one would reject
+      valid missions whose waypoints sit exactly on the boundary.
+
+  boundary_tolerance_m:
+    value: 1.0e-3
+    units: m
+    source: "geometry.py :: BOUNDARY_TOLERANCE_M"
+    effect: >
+      A point this close to the OpsArea boundary counts as on it (point_within /
+      segment_within). Survey lanes end exactly on the boundary and the lat/lon round
+      trip moves them by ~1e-8 m; without a tolerance a lane end would flip between
+      inside and outside on rounding alone.
+
+  route_clearance_m:
+    value: 6.0
+    units: m
+    source: "geometry.py :: ROUTE_CLEARANCE_M"
+    effect: >
+      How far a routed connector stands off each inner corner of an OpsArea notch it
+      goes round - the corner is pulled this far in along its bisector. Raise it to
+      keep the vehicle further from an excluded zone; each corner's detour grows with
+      it. The 4.95 m survey cross-track max flown at Pulau Ubin on 08 Sep 2026, plus the
+      0.83 m a banked 90 deg corner cuts at tight_corner_radius_m, rounded up (5.0 until
+      corners were banked on 11 Sep 2026). Falls back to half, then a quarter, then the
+      bare corner where the gap is narrower.
+
+  tight_corner_radius_m:
+    value: 2.0
+    units: m
+    source: "models.py :: TIGHT_CORNER_RADIUS_M"
+    effect: >
+      Acceptance radius written as param2 on corners that must not be rounded wide: the
+      router's corners beside an excluded notch, and any corner whose NAV_ACC_RAD
+      rounding would leave the OpsArea (geometry.py :: corner_radii). Every other corner
+      leaves param2 at 0 and gets NAV_ACC_RAD.
+
+  turn_drawing:
+    value: "polygon around a circle of turn_radius_m"
+    source: "geometry.py :: rounded_turns / _circumscribed_turn"
+    effect: >
+      How a turn is written into the .plan. PX4 rounds each waypoint with a fillet of
+      radius d / tan(bend / 2), d = the waypoint's acceptance radius. So the turn is drawn
+      as the polygon AROUND the circle (every leg grazing it) and each vertex gets
+      d = radius * tan(step / 2), half its leg: each fillet is then a piece of the same
+      circle, starting where the last ended - one continuous turn at one bank angle.
+      Since the evening of 14 Sep 2026. The first version (points ON the circle 22.5 deg
+      apart, 2 m radius; flown 14 Sep) left gaps between PX4's fillets: the roll swung
+      +-11-14 deg once per waypoint (0.72 s after each switch) and the arcs were flown at
+      2.7 m/s. Flown 14 Sep pm (this drawing): U-turns in 7.0 s at 3.4-6.1 m/s, survey
+      486.5 s (sharp corners 480.6, arcs 584.5), roll side-flips per turn 9 -> 2 - but the
+      bank still comes as one pulse per vertex (4 per U-turn, ~16 deg, back to 0 between;
+      pulses 2.24 s apart vs switches 2.34 s). PX4 re-plans a straight line to each new
+      waypoint and uses the fillet only to cap the corner speed, so the circle is not what
+      it flies.
+
+  arc_step_deg:
+    value: 90.0
+    units: degrees
+    source: "geometry.py :: ARC_STEP_DEG"
+    effect: >
+      Heading change per vertex of a drawn turn - at 90 deg a right-angle corner is a
+      single vertex and a lane-end U-turn is two. Each vertex is one waypoint switch for
+      PX4; with the circle drawing the switches are seamless, and fewer is better.
+      22.5 on 14 Sep, 45 until 18 Sep 2026. It went to 90 because each vertex carries
+      param2 = turn radius * tan(step / 2) and PX4 caps speed through a waypoint at
+      sqrt(MPC_ACC_HOR * param2 * tan(bend / 2)) - so a FINER arc writes a smaller param2
+      and slows the aircraft at every vertex. Drawing the turn more precisely made it fly
+      worse: at 45 deg, param2 was 4.83 m and the cap 2.28 m/s per vertex. At 90 deg
+      param2 is the full turn radius.
+
+  turn_vertex_acceptance_radius:
+    value: "turn radius * tan(arc_step_deg / 2)"
+    units: m
+    source: "geometry.py :: _circumscribed_turn"
+    effect: >
+      param2 written on each turn vertex - half its polygon leg, so PX4's fillet at that
+      vertex has exactly the turn radius. 4.8 / 5.2 / 5.5 m at the automatic radius for
+      28 / 30 / 32 m. Replaced the fixed 2 m (arc_acceptance_radius_m) of the first drawing.
+
+  turn_cut_footprint_fraction:
+    value: 0.8
+    source: "models.py :: TURN_CUT_FOOTPRINT_FRACTION"
+    effect: >
+      A turn may cut no deeper inside its corner than this fraction of the camera's
+      along-track half-footprint (and no deeper than a 90 deg turn of the chosen radius) -
+      the corner it cuts off must still be imaged. At the automatic radius the 90 deg rule
+      binds first (4.8-5.5 m against 7.1-8.1 m); this only matters for a large
+      turn_radius_m. Without any cap a hairpin was cut 12-29 m deep (14 Sep check).
+
+  min_turn_radius_m:
+    value: 3.0
+    units: m
+    source: "models.py :: MIN_TURN_RADIUS_M"
+    effect: >
+      A corner whose circle would be tighter than this (a hairpin, or legs too short) is
+      left as a plain corner for PX4 to round at NAV_ACC_RAD. Drawn, its vertices would
+      carry a near-zero acceptance radius and PX4 would crawl round - 0.1-2 m circles
+      appeared at SAFTI and in voronoi cells before this floor. 3 m at 15 deg of bank holds
+      2.8 m/s, about what PX4 flew through sharp corners on 11 Sep. A turn_radius_m below
+      3 m lowers the floor with it.
+
+  min_vertical_separation_m:
+    value: 2.0
+    units: m
+    source: "models.py :: MIN_VERTICAL_SEPARATION_M"
+    effect: >
+      Two drones whose altitude layers are at least this far apart count as separated
+      even where their paths touch (a shared cell edge, a hop across a neighbour's
+      area). The guardrail refuses a plan with any closer pair unless the horizontal
+      minimum holds. Equal to the 2 m layer spacing chosen 11 Sep 2026. SITL held
+      altitude to +-0.05 m, but a real barometer drifts more - revisit after field logs.
+
+  min_horizontal_separation_m:
+    value: 20.0
+    units: m
+    source: "models.py :: MIN_HORIZONTAL_SEPARATION_M"
+    effect: >
+      Required gap between two drones whose layers are closer than
+      min_vertical_separation_m, anywhere along their whole flown paths (transit, survey,
+      RTL), whatever the timing. Twice (GNSS ~3 m + measured tracking 5 m) plus the
+      airframe. Two drones on one layer from one home always fail it - the shared launch
+      point is a meeting point by definition.
+
+
+# -----------------------------------------------------------------------------
+# 9. SIMULATION  --  PX4 SITL + Gazebo
+# -----------------------------------------------------------------------------
+simulation:
+  status: active
+  PX4_GZ_WORLD:
+    value: ubin
+    effect: >
+      Selects Tools/simulation/gz/worlds/<name>.sdf. The world's
+      <spherical_coordinates> block sets the vehicle's home lat/lon.
+    critical: >
+      PX4_HOME_LAT / PX4_HOME_LON are IGNORED under Gazebo. If the world origin and
+      the KML sector disagree, every waypoint is kilometres away and PX4 rejects the
+      mission with "Geofence violation for waypoint 1". Make a world per site.
+  PX4_SIM_MODEL:
+    value: gz_x500
+    effect: Airframe. Plain gz_x500 has NO camera/gimbal - do not add a gimbal
+            command to its .plan. Gimbal work needs gz_x500_gimbal.
+  HEADLESS:
+    value: 1
+    effect: Server-only Gazebo. Required here - no NVIDIA driver, so the 3D GUI
+            software-renders and hangs. Watch the flight in QGC.
+  px4_daemon_flag:
+    value: "-d"
+    effect: >
+      Runs without the interactive pxh shell. REQUIRED for any background/logged
+      run - without it the prompt redraws into the non-TTY forever (measured: a
+      2.7 GB log in a few minutes).
+  dataman_file:
+    path: build/px4_sitl_default/rootfs/dataman
+    effect: >
+      PX4 SITL PERSISTS the uploaded mission and geofence here across restarts.
+      A stale fence from a previous site will reject a perfectly valid new mission.
+      Delete it when changing sites.
+
+
+# -----------------------------------------------------------------------------
+# 10. NOT PARAMETERISED  --  swarm behaviour
+# -----------------------------------------------------------------------------
+# Recorded so the gap is explicit before the swarm work starts. Today, "swarm" is
+# offline spatial partitioning only: N independent single-vehicle missions that
+# happen not to overlap on the ground. There is no runtime coordination.
+swarm_not_implemented:
+  status: GAP
+  workload_balancing:
+    effect: >
+      Strips are equal WIDTH, not equal WORK. Measured on the Ubin L-shaped AO:
+      cells of 9.06 / 5.29 / 4.03 ha -> 4.28 / 2.74 / 2.01 km, a 2.13x spread.
+      The search finishes when the unluckiest drone finishes.
+  altitude_layering:
+    status: CLOSED 11 Sep 2026
+    effect: >
+      Implemented: layer_spacing_m staggers the drones (30 / 32 / 28 m), and the
+      guardrail refuses two drones on layers closer than min_vertical_separation_m
+      whose paths come within min_horizontal_separation_m.
+  launch_scheduling:
+    effect: >
+      No launch order, stagger or synchronised start. All drones still climb from and
+      descend to ONE GCS point, through each other's layers - the planner warns about
+      it; separate pads and a stagger are needed.
+  transit_deconfliction:
+    effect: >
+      Outbound transits now fly at each drone's own layer, so they are separated in the
+      air - but only once each drone is up at its layer. The climb at the shared home
+      point is not deconflicted (see launch_scheduling).
+  rtl_separation:
+    effect: >
+      CONFIRMED GAP (SITL, 11 Sep 2026). RTL_RETURN_ALT is 30 m on this SITL (not the 60 m
+      source default), and PX4 never returns below the current altitude: drone-3 at 28 m
+      climbed to 30.1 m to come home. So drones 1 (30 m) and 3 (28 -> 30 m) return on the
+      same altitude; drone 2 stays at 32. Fix: a per-vehicle RTL_RETURN_ALT equal to the
+      drone's layer, or explicit waypoints home + LAND. Landing at one point is still
+      unsequenced.
+  endurance_model:    {effect: Nothing verifies a drone can complete its cell on one battery.}
+  reallocation:       {effect: If a drone drops out its cell is simply not searched.}
+  collision_avoidance: {effect: No inter-vehicle comms, no sense-and-avoid.}
+
+energy_model:
+  status: ESTIMATE - not measured on the airframe
+  source: "energy.py"
+  note: >
+    What a flight costs a particular drone. Used to hand cells out (mission.assignment) and,
+    with ingress_objective energy, to place the gate. Relative units throughout: comparable
+    between drones on one sortie, NOT convertible to watt-hours.
+  mass_scaling_exponent:
+    value: 1.5
+    effect: >
+      Energy per metre is (mass / reference_mass_kg) ^ 1.5, the hover-power scaling. Nothing
+      on this project has measured the real figure. What would replace it: hover current
+      against all-up mass, and cruise power against speed, on the airframe as flown. Until
+      then prefer the worst-case objective to a precise total - it stays safe when the model
+      is wrong - and read the numbers as an ordering, not a quantity.
+  reference_mass_kg:
+    value: 2.0
+    units: kg
+    effect: >
+      The mass the scaling is written against - the bare x500 in SITL. Only ratios matter,
+      so changing it rescales every load equally and changes no decision.
+  battery_fraction:
+    effect: >
+      Each drone's state of charge divides its load, which is what makes a half-empty drone
+      look expensive and pushes the big cells onto the drones that can afford them. A
+      reserve-on-landing rule would turn this from advisory into a hard stop; it does not
+      exist yet (history.md, parked item 4).
+  exact_assignment_limit:
+    value: 8
+    effect: >
+      Up to this many drones every hand-out is tried (n! of them) and the best is exact.
+      Above it a greedy bottleneck pass takes over: the drone that would suffer most picks
+      first from the cells still free. Monotone and quick, not provably optimal.
+
+dispersal:
+  status: active (only when mission.ingress_style is gate)
+  source: "ingress.py / geometry.py :: search_in_polygon"
+  grid_step_m:
+    value: 5.0
+    units: m
+    effect: >
+      Pitch of the first sweep for the gate, then two refinements at a quarter of the
+      previous pitch each. 5 m resolves the gate to well inside a waypoint acceptance
+      radius. A sweep rather than a gradient method because these objectives have flat
+      valleys where a local method stalls or lands anywhere along the floor depending on
+      where it started; a sweep is reproducible and costs milliseconds at these sizes.
+  coarse_step_multiplier:
+    value: 4.0
+    effect: >
+      Every entry-end combination is ranked on a grid this many times coarser, and only the
+      winner is refined - the alternative, refining all of them, gives the same answer for
+      many times the work.
+  entry_end_search_limit:
+    value: 5
+    effect: >
+      Up to this many drones, both ends of every cell are considered as its entry point
+      (2^n combinations). Reversing a route is free - the survey is identical and only the
+      transit out and the return swap - but it moves the start points and so moves the gate:
+      at Toa Payoh it took the equal-distance gate from 769 m of ingress each down to 681 m.
+      Above the limit every cell is entered from the end the scanner produced.
+  arrival_tolerance_s:
+    value: 0.5
+    units: s
+    effect: >
+      Fairness finer than this is not real - arrival times move by seconds with wind and
+      with the corner model - so scores are bucketed to it and everything equally fair is
+      then ranked on what it costs. Without the bucket, a gate 708 m out that happened to be
+      fair to nine decimal places beat a sensible one fair to four, at 1417 m of ingress
+      each (Toa Payoh voronoi, found 16 Sep 2026).
+  distance_tolerance_m:
+    value: 1.0
+    units: m
+    effect: The same bucket for the distance objective; a metre is inside GNSS noise.
+  load_tolerance:
+    value: 1.0
+    effect: The same bucket for the energy objective, in the relative load units of energy.py.
+  gate_at_home_m:
+    value: 50.0
+    units: m
+    effect: >
+      A gate closer than this to home is not a rendezvous - the swarm splits where it
+      launched - so the planner warns. Expect it with ingress_objective energy, where it is
+      the mathematically correct answer.
+
+imaging_standard:
+  status: active (warning only)
+  source: "models.py :: GSD_STANDARD_CM_PX, PlannerConfig.imaging_warnings"
+  gsd_standard_cm_px:
+    value: 3.0
+    units: cm/px
+    effect: >
+      The ground resolution a search is expected to hold - about 17 px across a person, and
+      what `--ceiling` has always been asked for. A stacked swarm puts its top layers above
+      the altitude that delivers it and nothing used to say so: at 8 drones on 2 m layers
+      the stack spans 24-38 m, and the top two (36 and 38 m) give 3.12 and 3.30 cm/px.
+      The planner now warns; it does not refuse, because a coarser top layer may be the
+      right trade when the area is large.
+
+coverage_check:
+  status: active (warning only)
+  source: "agents.py :: _coverage_warnings"
+  note: >
+    Whether the scan actually reaches the edge of the area it was told to search. The
+    interior is covered by construction - the lane pitch is narrower than the camera swath -
+    so only the boundary is walked, which is what makes it cheap enough to run on every
+    plan (0.1-0.4 s on the sectors here).
+  sample_m:
+    value: 8.0
+    units: m
+    effect: >
+      Pitch the OpsArea edge is walked at. Finer finds smaller slivers and costs more; 8 m
+      is about half a lane pitch.
+  tolerance_m:
+    value: 1.0
+    units: m
+    effect: >
+      Gaps below this are not reported - they are inside the tracking error already flown
+      (cross-track mean 0.13-0.46 m, max 4.95 m). Found on the SAFTI urban sector 16 Sep
+      2026, where up to 4.5 m of the edge lay outside every swath; Toa Payoh, the sector
+      actually flown, comes back clean.
+
+ingress_descent:
+  status: active (only when mission.ingress_style is gate)
+  source: "agents.py :: MIN_DESCENT_RUN_M"
+  min_descent_run_m:
+    value: 150.0
+    units: m
+    effect: >
+      A fan-out leg longer than this gets an extra waypoint half way along it, still at the
+      transit layer, so the drop to the survey layer happens after the swarm has opened up
+      rather than directly over the gate - where every drone is stacked on the same point.
+      Shorter legs keep the altitude change on the leg out of the gate; there is no room to
+      do better.

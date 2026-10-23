@@ -1,0 +1,13 @@
+# Bench: both real aircraft through their own Jetson/ELRS relay. No params, no plan.
+# jetson-1 -> ARTEX115 (sysid 115), jetson-2 -> ARTEX113 (sysid 113).
+drones:
+  - slot: 1
+    sysid: 115
+    host: jetson-1
+    remote_dir: ~/FlightPlanner
+    link: "udpout://127.0.0.1:14540"
+  - slot: 2
+    sysid: 113
+    host: jetson-2
+    remote_dir: ~/FlightPlanner
+    link: "udpout://127.0.0.1:14540"

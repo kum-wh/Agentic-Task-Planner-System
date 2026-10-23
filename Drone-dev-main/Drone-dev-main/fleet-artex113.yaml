@@ -1,0 +1,10 @@
+# Bench: jetson-2 -> ELRS relay -> ARTEX113 (sysid 113). No params, no set.
+# Relay must be running on jetson-2 (tools/elrs_link.py --agent-port 14540).
+plans_dir: missions/toapayoh/mission_drones
+
+drones:
+  - slot: 2
+    sysid: 113
+    host: jetson-2
+    remote_dir: ~/FlightPlanner
+    link: "udpout://127.0.0.1:14540"

@@ -1,0 +1,90 @@
+# ELRS backpack registry -- which physical transmitter is which.
+#
+# WHY THIS FILE EXISTS. Every ExpressLRS backpack broadcasts the identical ssid,
+# "ExpressLRS TX Backpack 000000". The 000000 is an unset uid, not a serial number, and
+# http://10.0.0.1/config reports the same product_name on every board. Two backpacks in
+# one room are therefore indistinguishable by every means except their BSSID, and
+# NetworkManager will silently attach to whichever is loudest.
+#
+# That is not hypothetical. On 28 Sep 2026 both Jetsons were configured against
+# 02:70:07:61:73:D0, and on the next scan both came back attached to 02:70:07:61:E4:CB --
+# a different physical board -- with jetson-2's lease moving 10.0.0.102 -> 10.0.0.100.
+# Neither box logged a problem. Two aircraft would have been taking commands from one
+# transmitter.
+#
+# So: the BSSID is the identity. tools/elrs_pair.py pins each Jetson to exactly one.
+
+backpacks:
+
+  ARTEX106:
+    bssid: "02:70:07:61:73:D0"
+    ssid: "ExpressLRS TX Backpack 000000"
+    ap_ip: 10.0.0.1
+    mavlink: {listen: 14555, send: 14550, protocol: UDP}
+    firmware: "TX Backpack 1.5.5"
+    product: "RadioMaster Pocket 2.4GHz TX"
+    notes: >
+      The board all the 28 Sep measurements were taken on -- 1514 packets_up, uplink clean
+      to 100 MISSION_ITEM_INT/s (4.9 kB/s), 5.8% loss at 200/s. Not in range as of the
+      evening of 28 Sep; powered down or carried off.
+
+  ARTEX112:
+    bssid: null            # RETIRED -- faulty, never observed on air. See notes.
+    retired: "2026-09-30: faults that could not be fixed; replaced by ARTEX115"
+    ssid: "ExpressLRS TX Backpack 000000"
+    ap_ip: 10.0.0.1
+    mavlink: {listen: 14555, send: 14550, protocol: UDP}
+    notes: >
+      NEVER SEEN ON AIR. Reported connected to the workstation's USB-C port, but nothing
+      from the drone kit enumerates over USB at all -- buses 1, 2 and 4 are empty and no
+      USB connect/disconnect event was logged in 90 minutes -- so if it is on that port it
+      is drawing 5 V only, with no data lines. Across 14 scan passes from three separate
+      receivers it never broadcast, and with ARTEX113 powered down nothing at all is on
+      air. The most likely explanation is that it has not been put into wifi mode: an ELRS
+      backpack does not broadcast merely because it has power. Bring it up in wifi mode and
+      run `python3 tools/elrs_pair.py --discover` to capture its BSSID.
+
+  ARTEX113:
+    bssid: "02:70:07:61:E4:CB"
+    ssid: "ExpressLRS TX Backpack 000000"
+    ap_ip: 10.0.0.1
+    mavlink: {listen: 14555, send: 14550, protocol: UDP}
+    firmware: "TX Backpack 1.5.5"
+    product: "RadioMaster Pocket 2.4GHz TX"
+    notes: >
+      IDENTITY PROVEN 28 Sep 2026 by power-down, not inferred. While this board was the
+      only one on air it was powered off deliberately; the BSSID vanished from the
+      workstation and from jetson-1's raw `iw dev wlP1p1s0 scan`, jetson-1 (pinned to it)
+      dropped to "Not connected", and 10.0.0.1 became unreachable from both Jetsons.
+      Note nmcli kept reporting it at a frozen signal of 82 from a stale scan cache long
+      after the radio was dead -- trust `iw ... scan` over `nmcli dev wifi list` when
+      deciding whether an AP is actually present.
+
+      AIRCRAFT BOUND AND PROVEN 29 Sep 2026. A flight controller answers through this
+      backpack as MAV_SYS_ID 113 -- MAV_TYPE_QUADROTOR, MAV_AUTOPILOT_PX4 -- which is the
+      board backed up as fc-backups/sysid113-hub5.3-2026-09-24.params. So the ARTEX113
+      name does line up with the aircraft sysid. Downlink measured 29.6 msg/s / 1069 B/s,
+      and a PARAM_VALUE round trip completed in 0.91 s, so command and telemetry both
+      cross the RF hop.
+
+      This board was mislabelled ARTEX112 earlier in the session on a signal-strength
+      guess. The MAVLink bridge check filed under that name -- packets_up 0 -> 25, gcs
+      registered 10.0.0.101 -- was taken on THIS board. The throughput figures (100
+      MISSION_ITEM_INT/s, 4.9 kB/s clean, 5.8% loss at 200/s, packets_up 1514) were taken
+      on ARTEX106 and are unaffected.
+
+  ARTEX115:
+    bssid: "02:70:07:61:E0:6E"
+    ssid: "ExpressLRS TX Backpack 000000"
+    mavlink: {listen: 14555, send: 14550, protocol: UDP}
+    notes: >
+      Brought in 30 Sep 2026 to replace ARTEX112, which had faults that could not be
+      fixed. Identified under the clean condition the registry asks for: it was the ONLY
+      ELRS AP on air, seen by jetson-1 at signal 69 and the workstation at 74, with
+      ARTEX113 powered down. No ambiguity.
+
+# One Jetson, one backpack. The pairing is enforced, not advisory: elrs_pair.py refuses to
+# finish if two Jetsons end up on the same BSSID.
+pairing:
+  jetson-1: ARTEX115
+  jetson-2: ARTEX113

@@ -1,0 +1,33 @@
+# Which drone is which, and how to reach it.
+#
+# `link` is the only line that changes between a simulated vehicle, a flight controller on
+# USB (maintenance only) and one behind an ELRS radio. Everything else stays put.
+#
+# `slot` is the planner's drone-N -- the cell and altitude layer it was given.
+# `sysid` is the aircraft's permanent MAVLink identity; the agent refuses to fly a plan
+#         whose slot does not match the vehicle that answers.
+
+params: sar_turn_params.params
+plans_dir: missions/toapayoh/mission_drones
+
+drones:
+  - slot: 1
+    sysid: 1
+    host: local
+    link: "udpin://:14540"
+    set:
+      # Each drone returns at its own altitude. PX4's RTL never descends below the
+      # current altitude, so without distinct values two aircraft coming home collapse
+      # onto one layer -- modelled 11 Sep 2026, confirmed in flight 23 Sep.
+      RTL_RETURN_ALT: 35
+
+  - slot: 2
+    sysid: 2
+    host: local
+    link: "udpin://:14541"
+    set:
+      RTL_RETURN_ALT: 45
+
+# The real two-Jetson fleet now lives in fleet-jetson.yaml -- both boards were brought up
+# and flown from on 28 Sep 2026. Use that file for hardware runs; this one stays as the
+# all-local SITL fleet the fault matrix runs against.
