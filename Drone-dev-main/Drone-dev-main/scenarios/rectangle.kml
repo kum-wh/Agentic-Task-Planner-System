@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document>
+	<name>rectangle</name>
+	<!-- Baseline: a plain 500 x 300 m rectangle. Lanes should run along the 500 m side, evenly spaced and centred, one clean strip per drone. -->
+	<Placemark>
+		<name>GCSlocation</name>
+		<Point><coordinates>103.9600000,1.4000000,0</coordinates></Point>
+	</Placemark>
+	<Placemark>
+		<name>GeoFence</name>
+		<Polygon><outerBoundaryIs><LinearRing><coordinates>
+							103.9591014,1.3991017,0
+							103.9662901,1.3991017,0
+							103.9662901,1.4035933,0
+							103.9591014,1.4035933,0
+							103.9591014,1.3991017,0
+		</coordinates></LinearRing></outerBoundaryIs></Polygon>
+	</Placemark>
+	<Placemark>
+		<name>OpsArea</name>
+		<Polygon><outerBoundaryIs><LinearRing><coordinates>
+							103.9608986,1.4000000,0
+							103.9653915,1.4000000,0
+							103.9653915,1.4026949,0
+							103.9608986,1.4026949,0
+							103.9608986,1.4000000,0
+		</coordinates></LinearRing></outerBoundaryIs></Polygon>
+	</Placemark>
+</Document>
+</kml>

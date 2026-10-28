@@ -1,0 +1,3 @@
+# Cached page embeddings written by rag_text.ipynb and rag_image.ipynb
+*.npy
+*.pt

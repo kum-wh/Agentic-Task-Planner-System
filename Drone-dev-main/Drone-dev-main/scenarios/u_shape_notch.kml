@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document>
+	<name>u_shape_notch</name>
+	<!-- Concave stress test: a U-shaped OpsArea with a 200 m wide corridor cut out of the top (think road or rail line). Lanes crossing the notch are split in two and must NOT be flown straight across it: connectors have to follow the edge round the notch. -->
+	<Placemark>
+		<name>GCSlocation</name>
+		<Point><coordinates>103.9600000,1.4000000,0</coordinates></Point>
+	</Placemark>
+	<Placemark>
+		<name>GeoFence</name>
+		<Polygon><outerBoundaryIs><LinearRing><coordinates>
+							103.9591014,1.3986525,0
+							103.9671887,1.3986525,0
+							103.9671887,1.4049407,0
+							103.9591014,1.4049407,0
+							103.9591014,1.3986525,0
+		</coordinates></LinearRing></outerBoundaryIs></Polygon>
+	</Placemark>
+	<Placemark>
+		<name>OpsArea</name>
+		<Polygon><outerBoundaryIs><LinearRing><coordinates>
+							103.9608986,1.4000000,0
+							103.9662901,1.4000000,0
+							103.9662901,1.4035933,0
+							103.9644929,1.4035933,0
+							103.9644929,1.4013475,0
+							103.9626958,1.4013475,0
+							103.9626958,1.4035933,0
+							103.9608986,1.4035933,0
+							103.9608986,1.4000000,0
+		</coordinates></LinearRing></outerBoundaryIs></Polygon>
+	</Placemark>
+</Document>
+</kml>

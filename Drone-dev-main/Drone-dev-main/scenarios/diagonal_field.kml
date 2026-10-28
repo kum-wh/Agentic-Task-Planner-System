@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document>
+	<name>diagonal_field</name>
+	<!-- Orientation test: a 600 x 200 m field rotated 30 degrees. Lanes should follow the field's own long axis, not the north/east grid. -->
+	<Placemark>
+		<name>GCSlocation</name>
+		<Point><coordinates>103.9600000,1.4000000,0</coordinates></Point>
+	</Placemark>
+	<Placemark>
+		<name>GeoFence</name>
+		<Polygon><outerBoundaryIs><LinearRing><coordinates>
+							103.9591014,1.3991017,0
+							103.9680873,1.3991017,0
+							103.9680873,1.4058390,0
+							103.9591014,1.4058390,0
+							103.9591014,1.3991017,0
+		</coordinates></LinearRing></outerBoundaryIs></Polygon>
+	</Placemark>
+	<Placemark>
+		<name>OpsArea</name>
+		<Polygon><outerBoundaryIs><LinearRing><coordinates>
+							103.9617090,1.4001204,0
+							103.9663782,1.4028153,0
+							103.9654796,1.4043712,0
+							103.9608105,1.4016763,0
+							103.9617090,1.4001204,0
+		</coordinates></LinearRing></outerBoundaryIs></Polygon>
+	</Placemark>
+</Document>
+</kml>
